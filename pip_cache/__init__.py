@@ -28,8 +28,8 @@ def get_index_filename():
     return os.path.join(get_pip_cache_data_dir(), 'all-packages.marisa')
 
 
-def get_all_package_names():
-    """Return a list of all packages names in the cache
+def get_all_package_names_raw():
+    """Return all packages names in the cache, as a newline-delimited string
     """
     raw_index_filename = get_raw_index_filename()
 
@@ -37,7 +37,13 @@ def get_all_package_names():
         return []
 
     with open(raw_index_filename, 'r') as f:
-        return f.readlines()
+        return f.read()
+
+
+def get_all_package_names():
+    """Return a list of all packages names in the cache
+    """
+    return get_all_package_names_raw().splitlines()
 
 
 def get_package_names(prefix=''):
@@ -57,12 +63,11 @@ def pkgnames(prefix=''):
     if not prefix:
         # If no prefix is provided, reading the package names from the raw list
         # is more performant
-        matching_packages = get_all_package_names()
+        print(get_all_package_names_raw())
     else:
         matching_packages = get_package_names(prefix=prefix)
-
-    response = '\n'.join(matching_packages)
-    print(response)
+        response = '\n'.join(matching_packages)
+        print(response)
 
 
 #TODO: support auto-async updates
