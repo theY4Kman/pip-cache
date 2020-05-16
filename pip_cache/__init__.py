@@ -9,38 +9,61 @@ manually updated version of `pip search`.
 from __future__ import print_function
 import os
 import sys
+
+import marisa_trie
+
 from .xdg import get_xdg_data_dir
 import argparse
 
-#TODO speed up by using msgpack to store a marisa-trie for quick prefix lookup
-# I haven't had the need to do this yet, since it's fast enough for autocomplete
-# already
-#import marisa-trie
-#import msgpack
-pip_cache_data_dir = os.path.join(get_xdg_data_dir(), 'pip-cache')
-index_filename = os.path.join(pip_cache_data_dir, 'all-packages.txt')
 
-# make sure that the directory we might be writing in exists
-if not os.path.isdir(pip_cache_data_dir):
-    os.mkdir(pip_cache_data_dir)
+def get_pip_cache_data_dir():
+    return os.path.join(get_xdg_data_dir(), 'pip-cache')
 
-def filter_prefix(strings, prefix=''):
-    return list(filter(lambda x: x.startswith(prefix), strings))
 
-def get_package_names(prefix='', prefix_func=filter_prefix):
+def get_raw_index_filename():
+    return os.path.join(get_pip_cache_data_dir(), 'all-packages.txt')
+
+
+def get_index_filename():
+    return os.path.join(get_pip_cache_data_dir(), 'all-packages.marisa')
+
+
+def get_all_package_names():
+    """Return a list of all packages names in the cache
     """
-    Return a list of packages name strings from cache matching a prefix.
+    raw_index_filename = get_raw_index_filename()
+
+    if not os.path.isfile(raw_index_filename):
+        return []
+
+    with open(raw_index_filename, 'r') as f:
+        return f.readlines()
+
+
+def get_package_names(prefix=''):
+    """Return a list of packages name strings from cache matching a prefix.
     """
-    if not os.path.isfile(index_filename):
-        open(index_filename, 'a').close()
-    with open(index_filename, 'r') as f:
-        packages = f.read().splitlines()
-    return prefix_func(packages, prefix=prefix)
+    index_trie_filename = get_index_filename()
+
+    if not os.path.isfile(index_trie_filename):
+        return []
+
+    index = marisa_trie.Trie()
+    index.load(index_trie_filename)
+    return index.keys(prefix)
+
 
 def pkgnames(prefix=''):
-    matching_packages = get_package_names(prefix=prefix)
-    for package in matching_packages:
-        print(package)
+    if not prefix:
+        # If no prefix is provided, reading the package names from the raw list
+        # is more performant
+        matching_packages = get_all_package_names()
+    else:
+        matching_packages = get_package_names(prefix=prefix)
+
+    response = '\n'.join(matching_packages)
+    print(response)
+
 
 #TODO: support auto-async updates
 # update_interval = timedelta(days=1)
@@ -66,36 +89,55 @@ def update_package_list():
         import xmlrpclib
     except ImportError:
         import xmlrpc.client as xmlrpclib
-    print('Connecting to PyPi...', end='')
-    sys.stdout.flush()
+
+    pip_cache_data_dir = get_pip_cache_data_dir()
+    raw_index_filename = get_raw_index_filename()
+    index_filename = get_index_filename()
+
+    # make sure that the directory we might be writing in exists
+    if not os.path.isdir(pip_cache_data_dir):
+        os.mkdir(pip_cache_data_dir)
+
+    print('Connecting to PyPi...', end='', flush=True)
     client = xmlrpclib.ServerProxy('https://pypi.python.org/pypi')
-    print('downloading package names...', end='')
-    sys.stdout.flush()
+    print('done!')
+
+    print('downloading package names...', end='', flush=True)
     packages = client.list_packages()
     print('done!')
-    sys.stdout.flush()
-    print('Writing packages to cache...', end='')
-    sys.stdout.flush()
-    with open(index_filename, 'w') as f:
-        for package in packages:
-                f.write("{}\n".format(package))
+
+    print('Writing packages to cache...', end='', flush=True)
+    with open(raw_index_filename, 'w') as f:
+        f.write('\n'.join(packages))
     print('done!')
-    sys.stdout.flush()
+
+    print('Indexing packages...', end='', flush=True)
+    trie = marisa_trie.Trie(packages)
+    trie.save(index_filename)
+    print('done!')
+
 
 def main():
-    parser = argparse.ArgumentParser(\
-            prog='pip-cache', \
-            description='Handle an offline cache of available pip libraries')
+    parser = argparse.ArgumentParser(
+        prog='pip-cache',
+        description='Handle an offline cache of available pip libraries'
+    )
     subparsers = parser.add_subparsers()
 
-    parser_update = subparsers.add_parser('update', \
-            help='Updates the local cache of pip package names')
+    parser_update = subparsers.add_parser(
+        'update',
+        help='Updates the local cache of pip package names',
+    )
     parser_update.set_defaults(func=update_package_list)
 
-    parser_pkgnames = subparsers.add_parser('pkgnames', \
-            help='List packages whose names start with a prefix')
-    parser_pkgnames.add_argument('prefix', nargs="?", type=str, help='Optional prefix.', \
-            default='')
+    parser_pkgnames = subparsers.add_parser(
+        'pkgnames',
+        help='List packages whose names start with a prefix',
+    )
+    parser_pkgnames.add_argument(
+        'prefix', nargs="?", type=str, default='',
+        help='Optional prefix.',
+    )
     parser_pkgnames.set_defaults(func=pkgnames)
     #args = parser.parse_args(['pkgnames', 'test'])
     #args = parser.parse_args(['update'])
@@ -107,6 +149,7 @@ def main():
     func_args = dict(func_args)
     func_args.pop('func', None)
     args.func(**func_args)
+
 
 if __name__ == '__main__':
     main()
